@@ -7,5 +7,5 @@ nazwa do ustalenia
 uruchamianie:
 
 ```bash
-uvcorn api:app --reload
+uvicorn api:app --reload
 ```
