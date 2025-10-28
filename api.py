@@ -1,20 +1,20 @@
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import StreamingResponse
-import io
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import Response
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-@app.post("/audio-to-midi")
-async def audio_to_midi(file: UploadFile = File(...)):
-    # 🔽 tu normalnie zrobiłbyś konwersję audio → midi
-    # content = await file.read()
-    # midi_bytes = convert_audio_to_midi(content)
-    # dla przykładu: zwracamy pusty plik MIDI
-    midi_bytes = b"MThd\x00\x00\x00\x06\x00\x01\x00\x01\x00\x60MTrk..."
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # do testów
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    return StreamingResponse(
-        io.BytesIO(midi_bytes),
-        media_type="audio/midi",
-        headers={"Content-Disposition": "attachment; filename=output.mid"}
-    )
-
+@app.post("/audio-to-xml")
+async def audio_to_xml(file: UploadFile = File(...)):
+    print("Received file:", file.filename)
+    with open("score.musicxml", "r", encoding="utf-8") as f:
+        xml_data = f.read()
+    return Response(content=xml_data, media_type="application/xml")
