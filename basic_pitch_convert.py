@@ -29,7 +29,7 @@ def convert(audio_path):
     midi_path = generate_midi(audio_path)
     score = converter.parse(midi_path)
     score.write("musicxml", output_filename)
-    return output_filename
+    return output_filename, midi_path
 
 if __name__ == "__main__":
     convert("melodia.wav")

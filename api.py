@@ -23,7 +23,7 @@ async def audio_to_xml(file: UploadFile = File(...)):
     with open(audio_file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    xml_file_path = basic_pitch_convert.convert(audio_file_path)
+    xml_file_path, midi_file_path = basic_pitch_convert.convert(audio_file_path)
     with open(xml_file_path, "r", encoding="utf-8") as f:
         xml_data = f.read()
     return Response(content=xml_data, media_type="application/xml")
