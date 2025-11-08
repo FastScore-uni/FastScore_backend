@@ -10,4 +10,4 @@ Uruchamianie:
 uvicorn api:app --reload
 ```
 
-Otwiera API pod adresem [http://127.0.0.1:8000/audio-to-xml].
+Otwiera API pod adresem http://127.0.0.1:8000/audio-to-xml.
