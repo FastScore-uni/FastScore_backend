@@ -1,0 +1,5 @@
+firebase_functions~=0.1.0
+firebase-admin>=6.0.0
+basic-pitch==0.3.0
+music21>=9.1.0
+scipy<1.13.0
