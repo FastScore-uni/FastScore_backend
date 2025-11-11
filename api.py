@@ -19,6 +19,7 @@ app.add_middleware(
 @app.post("/audio-to-xml")
 async def audio_to_xml(file: UploadFile = File(...)):
     print("Received file:", file.filename)
+    os.makedirs("./uploads", exist_ok=True)
     audio_file_path = os.path.join("uploads", file.filename)
     with open(audio_file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
