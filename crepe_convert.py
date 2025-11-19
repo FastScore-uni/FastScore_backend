@@ -1,7 +1,3 @@
-# ================================================
-# CREPE Notes – implementacja na podstawie pracy: Riley & Dixon (2023)
-# ================================================
-
 import numpy as np
 import librosa
 import crepe
@@ -12,6 +8,10 @@ import shutil
 from music21 import converter
 
 _output_dir = "crepe_output"
+
+# ================================================
+# CREPE Notes – implementacja na podstawie pracy: Riley & Dixon (2023)
+# ================================================
 
 def _generate_notes(audio_path):
     """
@@ -116,10 +116,6 @@ def _generate_notes(audio_path):
 
     print("Ostateczna liczba nut:", len(notes))
     return tempo, notes
-
-# ================================================
-# ZAPISANIE NUT DO PLIKU MIDI
-# ================================================
 
 def _save_notes_to_midi(notes, output_file_name="output.mid", bpm=120):
     """
