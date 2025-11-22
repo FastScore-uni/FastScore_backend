@@ -7,7 +7,7 @@ _output_dir = "crepe_output"
 
 def _audio_to_midi_crepe(audio_path):
     y, sr = librosa.load(audio_path, sr=16000, mono=True)
-    bpm = notes_tools.predict_tempo(y, sr)
+    bpm = notes_tools.predict_tempo(audio_path)
     print(f"Audio załadowane: {len(y)/sr:.2f} s, {sr} Hz")
 
     time, f0, confidence, activation = crepe.predict(y, sr, viterbi=True)

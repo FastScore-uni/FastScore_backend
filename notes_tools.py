@@ -8,60 +8,47 @@ import scipy.signal
 from mido import Message, MidiFile, MidiTrack, bpm2tempo
 from pathlib import Path
 import shutil
+import essentia.standard as es
 
 def generate_notes(y, sr, time, f0, confidence, time_step):
     """
-    Method for generating notes from values representing music file
+    Method for generating note events from values extracted from an audio file.
 
-    :return:
-    :param y:
-    :param sr:
-    :param time:
-    :param f0:
-    :param confidence:
-    :param time_step:
-    :return: List of notes in format: (onset_time, offset_time, midi_val, amp)
+    :param y: Audio time-series samples
+    :param sr: Sampling rate of the audio signal
+    :param time: Time axis corresponding to the analyzed features
+    :param f0: Fundamental frequency (pitch) values over time
+    :param confidence: Confidence values for each f0 estimate
+    :param time_step: Temporal resolution between consecutive f0 frames
+    :return: List of notes in format: (onset_time, offset_time, midi_val, amplitude)
     """
 
-    # 1. Wczytanie pliku audio
-    # ------------------------------------------------
-    # y, sr = librosa.load(audio_path, sr=16000, mono=True)
-    # [tempo], _ = librosa.beat.beat_track(y=y, sr=sr)
-    # print(f"Audio załadowane: {len(y)/sr:.2f} s, {sr} Hz")
-    #
-    # # 2. Ekstrakcja f0 i confidence przy użyciu CREPE
-    # # ------------------------------------------------
-    # time, f0, confidence, activation = crepe.predict(y, sr, viterbi=True)
-    # time_step = 0.01
-    # print("CREPE zakończony:", len(f0), "ramek")
-
-    # 3. Konwersja częstotliwości na skalę MIDI (logarytmiczną)
+    # 1. Konwersja częstotliwości na skalę MIDI (logarytmiczną)
     # ------------------------------------------------
     # Unikamy log(0) -> pomijamy wartości zerowe lub bardzo małe
     f0_safe = np.copy(f0)
     f0_safe[f0_safe < 1] = np.nan
     midi_pitch = 69 + 12 * np.log2(f0_safe / 440.0)
-    print(midi_pitch)
 
-    # 4. Obliczenie gradientu wysokości dźwięku (pitch gradient)
+    # 2. Obliczenie gradientu wysokości dźwięku (pitch gradient)
     # ------------------------------------------------
     pitch_grad = np.abs(np.gradient(midi_pitch))
     pitch_grad = np.nan_to_num(pitch_grad)  # usuń NaNy
     pitch_grad /= np.max(pitch_grad)        # normalizacja [0..1]
 
-    # 5. Odwrócenie confidence i połączenie sygnałów
+    # 3. Odwrócenie confidence i połączenie sygnałów
     # ------------------------------------------------
     inv_conf = 1.0 - confidence
     combined = inv_conf * pitch_grad
 
-    # 6. Detekcja pików w sygnale łączonym (kandydaci na granice nut)
+    # 4. Detekcja pików w sygnale łączonym (kandydaci na granice nut)
     # ------------------------------------------------
     threshold = 0.002  # wartość domyślna z artykułu
     peaks, _ = scipy.signal.find_peaks(combined, height=threshold)
     note_boundaries = time[peaks]
     print("Znaleziono kandydatów na granice nut:", len(note_boundaries))
 
-    # 7. Segmentacja według granic
+    # 5. Segmentacja według granic
     # ------------------------------------------------
     segments = []
     start = 0
@@ -71,7 +58,7 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
         start = end
     segments.append((start, len(f0)))  # ostatni segment
 
-    # 8. Scalanie sąsiednich segmentów jeśli różnica < 1 półtonu
+    # 6. Scalanie sąsiednich segmentów jeśli różnica < 1 półtonu
     # ------------------------------------------------
     merged_segments = []
     prev_seg = segments[0]
@@ -89,7 +76,7 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
 
     print("Po scaleniu:", len(merged_segments), "segmentów")
 
-    # 9. (Opcjonalne) wykrywanie powtórzonych nut
+    # 7. (Opcjonalne) wykrywanie powtórzonych nut
     # ------------------------------------------------
     # Użycie detekcji onsetów z Librosa jako wsparcie
     onset_env = librosa.onset.onset_strength(y=y, sr=sr)
@@ -97,7 +84,7 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
     onset_times = librosa.frames_to_time(onsets, sr=sr)
     # Można użyć tych onsetów do podziału długich segmentów, jeśli zachodzi potrzeba.
 
-    # 10. Amplituda, odfiltrowanie cichych i krótkich nut
+    # 8. Amplituda, odfiltrowanie cichych i krótkich nut
     # ------------------------------------------------
     velocity_threshold = 0.02
     min_duration = 0.03       # 30 ms
@@ -121,11 +108,15 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
 
 def save_notes_to_midi(notes, output_dir, output_file_name="output.mid", bpm=120):
     """
-    Zapisuje listę nut (onset, offset, pitch, velocity)
-    do pliku MIDI.
+    Saves a list of notes to a MIDI file.
 
-    notes: [(onset_s, offset_s, midi_pitch, amplitude)]
+    :param notes: List in the format: [(onset_s, offset_s, midi_pitch, amplitude)]
+    :param output_dir: Path to the output directory
+    :param output_file_name: Target MIDI file name
+    :param bpm: Tempo of the piece in beats per minute
+    :return: Path to the resulting MIDI file
     """
+
     output_dir = Path(output_dir)
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -165,7 +156,16 @@ def save_notes_to_midi(notes, output_dir, output_file_name="output.mid", bpm=120
     print(f"✅ Zapisano {len(notes)} nut do pliku: {output_path}")
     return output_path
 
-def predict_tempo(y, sr):
-    [tempo], _ = librosa.beat.beat_track(y=y, sr=sr)
-    print(f"tempo: {tempo}")
-    return 120
+def predict_tempo(filepath):
+    """
+    Estimates the tempo (beats per minute) of an audio signal.
+
+    :param filepath: Path to an audiofile
+    :return: Estimated tempo in BPM
+    """
+    audio = es.MonoLoader(filename=filepath)()
+    rhythm = es.RhythmExtractor()(audio)
+    bpm, _, _, _ = rhythm
+
+    print("BPM:", bpm)
+    return bpm
