@@ -164,8 +164,7 @@ def predict_tempo(filepath):
     :return: Estimated tempo in BPM
     """
     audio = es.MonoLoader(filename=filepath)()
-    rhythm = es.RhythmExtractor()(audio)
-    bpm, _, _, _ = rhythm
+    bpm, _, _, _ = es.RhythmExtractor()(audio)
 
     print("BPM:", bpm)
     return bpm
