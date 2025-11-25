@@ -1,10 +1,9 @@
 import shutil
-
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
-import basic_pitch_convert
-import crepe_convert
+from multiprocessing import Process, Pipe
+import workers
 import os
 
 app = FastAPI()
@@ -17,7 +16,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def audio_to_xml(convert_function, file: UploadFile):
+crepe_pipe, crepe_child = Pipe()
+crepe_process = Process(target=workers.crepe_worker, args=(crepe_child,))
+crepe_process.start()
+
+bp_pipe, bp_child = Pipe()
+bp_process = Process(target=workers.basic_pitch_worker, args=(bp_child,))
+bp_process.start()
+
+melody_ext_pipe, melody_ext_child = Pipe()
+melody_ext_process = Process(target=workers.melody_ext_worker, args=(melody_ext_child,))
+melody_ext_process.start()
+
+def audio_to_xml(convert_pipe, file: UploadFile):
     print("Received file:", file.filename)
     os.makedirs("./uploads", exist_ok=True)
     audio_file_path = os.path.join("uploads", file.filename)
@@ -29,8 +40,9 @@ def audio_to_xml(convert_function, file: UploadFile):
         audio_file_path = new_path
     with open(audio_file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-
-    xml_file_path, midi_file_path = convert_function(audio_file_path)
+    convert_pipe.send(audio_file_path)
+    xml_file_path, midi_file_path = convert_pipe.recv()
+    print(f"otrzymane xml: {xml_file_path}")
     with open(xml_file_path, "r", encoding="utf-8") as f:
         xml_file = f.read()
     os.remove(xml_file_path)
@@ -38,15 +50,15 @@ def audio_to_xml(convert_function, file: UploadFile):
 
 @app.post("/convert_bp")
 async def convert_bp(file: UploadFile = File(...)):
-    xml_data = audio_to_xml(basic_pitch_convert.convert, file)
+    xml_data = audio_to_xml(bp_pipe, file)
     return Response(content=xml_data, media_type="application/xml")
 
 @app.post("/convert_crepe")
 async def convert_crepe(file: UploadFile = File(...)):
-    xml_data = audio_to_xml(crepe_convert.convert, file)
+    xml_data = audio_to_xml(crepe_pipe, file)
     return Response(content=xml_data, media_type="application/xml")
 
 @app.post("/convert_melody_ext")
 async def convert_crepe_ext(file: UploadFile = File(...)):
-    xml_data = audio_to_xml(crepe_convert.convert, file)
+    xml_data = audio_to_xml(melody_ext_pipe, file)
     return Response(content=xml_data, media_type="application/xml")

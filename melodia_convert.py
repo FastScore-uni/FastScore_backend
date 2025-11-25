@@ -10,7 +10,7 @@ _output_dir = "melodia_output"
 def _audio_to_midi_melodia(audio_path):
     y, sr = librosa.load(audio_path, sr=None, mono=True)
     audio = essentia.array(y.astype(np.float32))
-    melody = es.PredominantMelody()
+    melody = es.PredominantPitchMelodia()
     f0, confidence = melody(audio)
 
     hop_size = 128
@@ -34,4 +34,5 @@ def convert(audio_path, output_filename="output.musicxml"):
     return output_filename, midi_path
 
 if __name__ == "__main__":
+    # print(dir(es))
     convert("Tytuł.wav")
