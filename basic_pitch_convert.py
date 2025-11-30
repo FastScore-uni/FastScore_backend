@@ -7,6 +7,13 @@ from music21 import converter
 _output_dir = "basic_pitch_output"
 
 def _generate_midi(audio_path):
+    # results, midi_data, note_events = model_inference(
+    #     audio,
+    #     sr,
+    #     model_or_model_path=ICASSP_2022_MODEL_PATH,
+    # )
+    # midi_data.tempo = 120   # BPM
+
     output_dir = Path(_output_dir)
     if output_dir.exists():
         shutil.rmtree(output_dir)

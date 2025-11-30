@@ -5,16 +5,41 @@ from svglib.svglib import svg2rlg
 from reportlab.pdfgen import canvas
 from reportlab.graphics import renderPDF
 import verovio
-from io import BytesIO
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 from midi2audio import FluidSynth
-import basic_pitch_convert
 import os
 
-app = FastAPI()
+pipes = []
+def newPipe():
+    parent, child = Pipe()
+    pipes.append(parent)
+    return parent, child
+
+crepe_pipe, crepe_child = newPipe()
+bp_pipe, bp_child = newPipe()
+melody_ext_pipe, melody_ext_child = newPipe()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    processes = [
+        Process(target=workers.crepe_worker, args=(crepe_child,), daemon=True),
+        Process(target=workers.basic_pitch_worker, args=(bp_child,), daemon=True),
+        Process(target=workers.melody_ext_worker, args=(melody_ext_child,), daemon=True),
+    ]
+    for p in processes:
+        p.start()
+    yield
+    for pipe in pipes:
+        pipe.send(None)
+    for p in processes:
+        if p.is_alive():
+            p.kill()
+            p.join(timeout=3)
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,17 +49,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-crepe_pipe, crepe_child = Pipe()
-crepe_process = Process(target=workers.crepe_worker, args=(crepe_child,))
-crepe_process.start()
-
-bp_pipe, bp_child = Pipe()
-bp_process = Process(target=workers.basic_pitch_worker, args=(bp_child,))
-bp_process.start()
-
-melody_ext_pipe, melody_ext_child = Pipe()
-melody_ext_process = Process(target=workers.melody_ext_worker, args=(melody_ext_child,))
-melody_ext_process.start()
 
 def audio_to_xml(convert_pipe, file: UploadFile):
     print("Received file:", file.filename)
@@ -49,8 +63,11 @@ def audio_to_xml(convert_pipe, file: UploadFile):
     with open(audio_file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     convert_pipe.send(audio_file_path)
+    xml_file_path: str
     xml_file_path, midi_file_path = convert_pipe.recv()
     print(f"otrzymane xml: {xml_file_path}")
+    if xml_file_path == "" or midi_file_path == "":
+        return ""
     with open(xml_file_path, "r", encoding="utf-8") as f:
         xml_file = f.read()
     os.remove(xml_file_path)

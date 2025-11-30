@@ -166,5 +166,12 @@ def predict_tempo(filepath):
     audio = es.MonoLoader(filename=filepath)()
     bpm, _, _, _ = es.RhythmExtractor()(audio)
 
-    print("BPM:", bpm)
+    print(f"Wykryte tempo: {bpm}bpm")
+    if bpm <= 0:
+        y, sr = librosa.load(librosa.ex('choice'), duration=10)
+        bpm, _ = librosa.beat.beat_track(y=y, sr=sr)
+        print(f"Wykryte tempo (librosa): {bpm}")
+        if bpm <= 0:
+            bpm = 120
+            print(f"Tempo zastąpione domyślną wartością: {bpm}")
     return bpm
