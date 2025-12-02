@@ -1,5 +1,7 @@
 import base64
 import shutil
+from multiprocessing import Process, Pipe
+import workers
 from svglib.svglib import svg2rlg
 from reportlab.pdfgen import canvas
 from reportlab.graphics import renderPDF
@@ -24,25 +26,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/basic_pitch_output", StaticFiles(directory="basic_pitch_output"), name="basic_pitch_output")
+crepe_pipe, crepe_child = Pipe()
+crepe_process = Process(target=workers.crepe_worker, args=(crepe_child,))
+crepe_process.start()
 
+bp_pipe, bp_child = Pipe()
+bp_process = Process(target=workers.basic_pitch_worker, args=(bp_child,))
+bp_process.start()
 
-@app.post("/audio-to-xml")
-async def audio_to_xml(file: UploadFile = File(...)):
+melody_ext_pipe, melody_ext_child = Pipe()
+melody_ext_process = Process(target=workers.melody_ext_worker, args=(melody_ext_child,))
+melody_ext_process.start()
+
+def audio_to_xml(convert_pipe, file: UploadFile):
     print("Received file:", file.filename)
     os.makedirs("./uploads", exist_ok=True)
     audio_file_path = os.path.join("uploads", file.filename)
+    if os.path.exists(audio_file_path):
+        base, ext = os.path.splitext(audio_file_path)
+        i = 1
+        while os.path.exists(new_path := f"{base}_{i}{ext}"):
+            i += 1
+        audio_file_path = new_path
     with open(audio_file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-
-    xml_file_path, midi_file_path = basic_pitch_convert.convert(audio_file_path)
+    convert_pipe.send(audio_file_path)
+    xml_file_path, midi_file_path = convert_pipe.recv()
+    print(f"otrzymane xml: {xml_file_path}")
     with open(xml_file_path, "r", encoding="utf-8") as f:
         xml_data = f.read()
     with open(midi_file_path, "rb") as f:
         midi_bytes = f.read()
     midi_b64 = base64.b64encode(midi_bytes).decode("ascii")
+    os.remove(xml_file_path)
     return {"xml": xml_data, "midi_base64": midi_b64}
 
+@app.post("/convert_bp")
+async def convert_bp(file: UploadFile = File(...)):
+    xml_data = audio_to_xml(bp_pipe, file)
+    return Response(content=xml_data, media_type="application/xml")
+
+@app.post("/convert_crepe")
+async def convert_crepe(file: UploadFile = File(...)):
+    xml_data = audio_to_xml(crepe_pipe, file)
+    return Response(content=xml_data, media_type="application/xml")
+
+@app.post("/convert_melody_ext")
+async def convert_crepe_ext(file: UploadFile = File(...)):
+    xml_data = audio_to_xml(melody_ext_pipe, file)
+    return Response(content=xml_data, media_type="application/xml")
 
 
 @app.post("/midi-to-audio")
@@ -132,3 +164,4 @@ def scale_drawing(drawing, max_width=595, max_height=842):
     drawing.width *= scale
     drawing.height *= scale
     drawing.scale(scale, scale)
+ 
