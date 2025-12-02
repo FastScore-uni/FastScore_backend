@@ -64,17 +64,17 @@ def audio_to_xml(convert_pipe, file: UploadFile):
 @app.post("/convert_bp")
 async def convert_bp(file: UploadFile = File(...)):
     xml_data = audio_to_xml(bp_pipe, file)
-    return Response(content=xml_data, media_type="application/xml")
+    return xml_data
 
 @app.post("/convert_crepe")
 async def convert_crepe(file: UploadFile = File(...)):
     xml_data = audio_to_xml(crepe_pipe, file)
-    return Response(content=xml_data, media_type="application/xml")
+    return xml_data
 
 @app.post("/convert_melody_ext")
 async def convert_crepe_ext(file: UploadFile = File(...)):
     xml_data = audio_to_xml(melody_ext_pipe, file)
-    return Response(content=xml_data, media_type="application/xml")
+    return xml_data
 
 
 @app.post("/midi-to-audio")
@@ -105,63 +105,43 @@ async def xml_to_pdf(xml: str = Form(...)):
 
     tk = verovio.toolkit()
     options = {
-        "scale": 40,
-        "adjustPageWidth": True,
+        "scale": 80,
+        "footer": "none",
+        "header": "none",
+        "pageHeight": 2970,
+        "pageWidth": 2100,
+        "unit": 10,
     }
     tk.setOptions(options)
 
     try:
         tk.loadData(xml)
         page_count = tk.getPageCount()
-        if page_count < 1:
-            raise HTTPException(status_code=500, detail="No pages rendered by Verovio")
 
-        svg = tk.renderToSVG(1)
+        packet = BytesIO()
+
+        pdf_w, pdf_h = 595.0, 842.0
+        c = canvas.Canvas(packet, pagesize=(pdf_w, pdf_h))
+
+        for page in range(1, page_count + 1):
+            svg = tk.renderToSVG(page)
+            svg = svg.replace("#00000", "#000000")
+
+            drawing = svg2rlg(BytesIO(svg.encode("utf-8")))
+
+            scale_x = pdf_w / 21000
+            scale_y = pdf_h / 29700
+            scale = min(scale_x, scale_y)
+            
+            drawing.scale(scale, scale)
+            offset_y = -drawing.height * scale + pdf_h
+
+            renderPDF.draw(drawing, c, 0, offset_y)
+            c.showPage()
+
+        c.save()
+        packet.seek(0)
+        return Response(content=packet.read(), media_type="application/pdf")
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Verovio render error: {e}")
-    svg = svg.replace("#00000", "#000000")
-    try:
-        drawing = svg2rlg(BytesIO(svg.encode("utf-8")))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"svg2rlg parse error: {e}")
-    
-    max_w, max_h = 595.0, 842.0
-    dw = getattr(drawing, "width", None)
-    dh = getattr(drawing, "height", None)
-
-    if not dw or not dh:
-        scale = 1.0
-    else:
-        scale = min(max_w / float(dw), max_h / float(dh))
-        try:
-            drawing.scale(scale, scale)
-        except Exception:
-            pass
-        
-    translated_x = (max_w - (dw * scale if dw else 0)) / 2
-    translated_y = (max_h - (dh * scale if dh else 0)) / 2
-        
-    packet = BytesIO()
-    c = canvas.Canvas(packet, pagesize=(max_w, max_h))
-    try:
-        renderPDF.draw(drawing, c, translated_x, translated_y)
-    except Exception as e:
-        try:
-            renderPDF.draw(drawing, c, 0, 0)
-        except Exception as e2:
-            raise HTTPException(status_code=500, detail=f"SVG->PDF render error: {e} / fallback {e2}")
-    c.showPage()
-    c.save()
-    packet.seek(0)
-    pdf_bytes = packet.read()
-
-    return Response(content=pdf_bytes, media_type="application/pdf")
-
-def scale_drawing(drawing, max_width=595, max_height=842):
-    scale_w = max_width / drawing.width
-    scale_h = max_height / drawing.height
-    scale = min(scale_w, scale_h)
-    drawing.width *= scale
-    drawing.height *= scale
-    drawing.scale(scale, scale)
- 
