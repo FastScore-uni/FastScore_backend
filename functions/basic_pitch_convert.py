@@ -22,7 +22,7 @@ def generate_midi(audio_path):
         sonify_midi=False,
         save_model_outputs=False,
         save_notes=True,
-        model_or_model_path=ICASSP_2022_MODEL_PATH
+        model_path=ICASSP_2022_MODEL_PATH
     )
     
     generated_midi_path = str(output_dir / f"{Path(audio_path).stem}_basic_pitch.mid")
