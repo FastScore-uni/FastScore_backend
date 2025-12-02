@@ -9,7 +9,7 @@ def crepe_worker(conn):
             conn.send(result)
         except Exception as e:
             print(f"Crepe worker exception: {e}")
-            conn.send("", "")
+            conn.send(("", ""))
 
 def basic_pitch_worker(conn):
     import basic_pitch_convert
@@ -22,7 +22,7 @@ def basic_pitch_worker(conn):
             conn.send(result)
         except Exception as e:
             print(f"Crepe worker exception: {e}")
-            conn.send("", "")
+            conn.send(("", ""))
 
 def melody_ext_worker(conn):
     import melodia_convert
@@ -35,4 +35,4 @@ def melody_ext_worker(conn):
             conn.send(result)
         except Exception as e:
             print(f"Crepe worker exception: {e}")
-            conn.send("", "")
+            conn.send(("", ""))

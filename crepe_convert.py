@@ -27,4 +27,4 @@ def convert(audio_path, output_filename="output.musicxml"):
     return output_filename, midi_path
 
 if __name__ == "__main__":
-    convert("uploads/recording_1.wav")
+    convert("uploads/recording.wav")

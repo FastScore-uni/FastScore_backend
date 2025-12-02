@@ -49,11 +49,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_upload_dir = "uploads"
 
 def audio_to_xml(convert_pipe, file: UploadFile):
     print("Received file:", file.filename)
-    os.makedirs("./uploads", exist_ok=True)
-    audio_file_path = os.path.join("uploads", file.filename)
+    os.makedirs(_upload_dir, exist_ok=True)
+    audio_file_path = os.path.join(_upload_dir, file.filename)
     if os.path.exists(audio_file_path):
         base, ext = os.path.splitext(audio_file_path)
         i = 1

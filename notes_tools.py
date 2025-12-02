@@ -9,6 +9,7 @@ from mido import Message, MidiFile, MidiTrack, bpm2tempo
 from pathlib import Path
 import shutil
 import essentia.standard as es
+import matplotlib.pyplot as plt
 
 def generate_notes(y, sr, time, f0, confidence, time_step):
     """
@@ -44,7 +45,9 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
     # 4. Detekcja pików w sygnale łączonym (kandydaci na granice nut)
     # ------------------------------------------------
     threshold = 0.002  # wartość domyślna z artykułu
+    confidence_threshold = 0.2
     peaks, _ = scipy.signal.find_peaks(combined, height=threshold)
+    peaks = [p for p in peaks if confidence[p]>confidence_threshold]
     note_boundaries = time[peaks]
     print("Znaleziono kandydatów na granice nut:", len(note_boundaries))
 
@@ -58,20 +61,25 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
         start = end
     segments.append((start, len(f0)))  # ostatni segment
 
-    # 6. Scalanie sąsiednich segmentów jeśli różnica < 1 półtonu
+    # 6. Usunięcie krótkich i scalanie sąsiednich segmentów jeśli różnica < 1 półtonu
     # ------------------------------------------------
     merged_segments = []
     prev_seg = segments[0]
+    min_duration = 0.06       # 80 ms
     for seg in segments[1:]:
         s1, e1 = prev_seg
-        s2, e2 = seg
-        med1 = np.nanmedian(midi_pitch[s1:e1])
-        med2 = np.nanmedian(midi_pitch[s2:e2])
-        if abs(med1 - med2) < 1:  # mniej niż 1 półton
-            prev_seg = (s1, e2)
-        else:
-            merged_segments.append(prev_seg)
+        if (e1 - s1) * time_step < min_duration:
             prev_seg = seg
+        else:
+            s2, e2 = seg
+            if (e2 - s2) * time_step >= min_duration:
+                med1 = np.nanmedian(midi_pitch[s1:e1])
+                med2 = np.nanmedian(midi_pitch[s2:e2])
+                if abs(med1 - med2) < 1 and s2 - e1 <= 1:  # mniej niż 1 półton
+                    prev_seg = (s1, e2)
+                else:
+                    merged_segments.append(prev_seg)
+                    prev_seg = seg
     merged_segments.append(prev_seg)
 
     print("Po scaleniu:", len(merged_segments), "segmentów")
@@ -79,15 +87,14 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
     # 7. (Opcjonalne) wykrywanie powtórzonych nut
     # ------------------------------------------------
     # Użycie detekcji onsetów z Librosa jako wsparcie
-    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-    onsets = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, backtrack=True)
-    onset_times = librosa.frames_to_time(onsets, sr=sr)
+    # onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+    # onsets = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, backtrack=True)
+    # onset_times = librosa.frames_to_time(onsets, sr=sr)
     # Można użyć tych onsetów do podziału długich segmentów, jeśli zachodzi potrzeba.
 
     # 8. Amplituda, odfiltrowanie cichych i krótkich nut
     # ------------------------------------------------
     velocity_threshold = 0.02
-    min_duration = 0.03       # 30 ms
     notes = []
 
     for (s, e) in merged_segments:
@@ -102,8 +109,38 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
         onset_time = s * time_step
         offset_time = e * time_step
         notes.append((onset_time, offset_time, midi_val, amp))
+        print(f"onset_time {onset_time}, offset_time {offset_time}, midi_val {midi_val}, amp {amp}, duration:{dur}")
 
     print("Ostateczna liczba nut:", len(notes))
+    plt.figure(figsize=(12, 6))
+
+    plt.subplot(4, 1, 4)
+    plt.plot(y, label="y")
+    plt.title("4. Wysokość dźwięku")
+    plt.xlabel("Czas [s]");
+    plt.ylabel("y pitch")
+
+    plt.subplot(4, 1, 1)
+    plt.plot(time, midi_pitch, label="Pitch (MIDI)")
+    plt.title("1. Wysokość dźwięku (CREPE)")
+    plt.xlabel("Czas [s]");
+    plt.ylabel("MIDI pitch")
+
+    plt.subplot(4, 1, 2)
+    plt.plot(time, confidence, label="Confidence", color="orange")
+    plt.title("2. Confidence (CREPE)")
+    plt.xlabel("Czas [s]");
+    plt.ylabel("Confidence")
+
+    plt.subplot(4, 1, 3)
+    plt.plot(time, combined, label="Combined", color="green")
+    plt.scatter(time[peaks], combined[peaks], color="red", label="Peaks")
+    plt.title("3. Combined = (1 - confidence) * |gradient|")
+    plt.xlabel("Czas [s]");
+    plt.ylabel("Połączony sygnał")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
     return notes
 
 def save_notes_to_midi(notes, output_dir, output_file_name="output.mid", bpm=120):
@@ -169,7 +206,7 @@ def predict_tempo(filepath):
     print(f"Wykryte tempo: {bpm}bpm")
     if bpm <= 0:
         y, sr = librosa.load(librosa.ex('choice'), duration=10)
-        bpm, _ = librosa.beat.beat_track(y=y, sr=sr)
+        [bpm], _ = librosa.beat.beat_track(y=y, sr=sr)
         print(f"Wykryte tempo (librosa): {bpm}")
         if bpm <= 0:
             bpm = 120
