@@ -1,11 +1,12 @@
 # Use Python 3.11 base image with GPU support (CUDA 11.8 for TensorFlow 2.12)
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
-# Install Python 3.11
+# Install Python 3.11 and ffmpeg
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3-pip \
     python3.11-dev \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Python 3.11 as default
