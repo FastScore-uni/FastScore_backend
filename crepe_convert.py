@@ -1,5 +1,4 @@
 import crepe
-from music21 import converter
 import notes_tools
 import audio_preprocessing
 
@@ -18,13 +17,12 @@ def _audio_to_midi_crepe(y, sr, bpm):
 # Metody publiczne:
 # ------------------------------------------------
 
-def convert(audio_path, output_filename="output.musicxml"):
-    y, sr = audio_preprocessing.preprocess_audio(audio_path)
+def convert(audio_path, preprocessing=False, output_filename="output.musicxml"):
+    y, sr = audio_preprocessing.preprocess_audio(audio_path, only_load= not preprocessing)
     bpm = notes_tools.predict_tempo(audio_path)
     midi_path = _audio_to_midi_crepe(y, sr, bpm)
-    score = converter.parse(midi_path)
-    score.write("musicxml", output_filename)
-    return output_filename, midi_path
+    xml_path = notes_tools.generate_xml(midi_path, output_filename)
+    return xml_path, midi_path
 
 if __name__ == "__main__":
-    convert("uploads/recording.wav")
+    convert("test_music/chromatic.wav", preprocessing=True)

@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import essentia.standard as es
 import matplotlib.pyplot as plt
+from music21 import converter
 
 def generate_notes(y, sr, time, f0, confidence, time_step):
     """
@@ -61,25 +62,24 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
         start = end
     segments.append((start, len(f0)))  # ostatni segment
 
-    # 6. Usunięcie krótkich i scalanie sąsiednich segmentów jeśli różnica < 1 półtonu
+    # 6. Scalanie krótkich i sąsiednich segmentów jeśli różnica < 1 półtonu
     # ------------------------------------------------
     merged_segments = []
     prev_seg = segments[0]
     min_duration = 0.06       # 80 ms
     for seg in segments[1:]:
         s1, e1 = prev_seg
+        s2, e2 = seg
         if (e1 - s1) * time_step < min_duration:
-            prev_seg = seg
+            prev_seg = s1, e2
         else:
-            s2, e2 = seg
-            if (e2 - s2) * time_step >= min_duration:
-                med1 = np.nanmedian(midi_pitch[s1:e1])
-                med2 = np.nanmedian(midi_pitch[s2:e2])
-                if abs(med1 - med2) < 1 and s2 - e1 <= 1:  # mniej niż 1 półton
-                    prev_seg = (s1, e2)
-                else:
-                    merged_segments.append(prev_seg)
-                    prev_seg = seg
+            med1 = np.nanmedian(midi_pitch[s1:e1])
+            med2 = np.nanmedian(midi_pitch[s2:e2])
+            if abs(med1 - med2) < 0.8:  # mniej niż 1 półton
+                prev_seg = (s1, e2)
+            else:
+                merged_segments.append(prev_seg)
+                prev_seg = seg
     merged_segments.append(prev_seg)
 
     print("Po scaleniu:", len(merged_segments), "segmentów")
@@ -94,10 +94,15 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
 
     # 8. Amplituda, odfiltrowanie cichych i krótkich nut
     # ------------------------------------------------
-    velocity_threshold = 0.02
+    confidence_threshold_2 = 0.5
+    mean_velocity = np.mean([np.max(np.abs(y[int(s*sr*time_step):int(e*sr*time_step)])) for s, e in merged_segments])
+    velocity_threshold = mean_velocity / 20 # 5% of mean velocity
+    print(f"velocity threshold {velocity_threshold}")
     notes = []
 
     for (s, e) in merged_segments:
+        if np.nanmedian(confidence[s:e]) < confidence_threshold_2:
+            continue
         seg_audio = y[int(s*sr*time_step):int(e*sr*time_step)]  # 0.01s = 10ms
         if len(seg_audio) == 0:
             continue
@@ -111,36 +116,43 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
         notes.append((onset_time, offset_time, midi_val, amp))
         print(f"onset_time {onset_time}, offset_time {offset_time}, midi_val {midi_val}, amp {amp}, duration:{dur}")
 
+    target_mean = 50.0
+    min_velocity = 20.0
+    max_velocity = 80.0
+    old_mean = float(np.nanmean([amp for _, _, _, amp in notes]))
+    notes = [(val1, val2, val3, max(min_velocity, min(max_velocity, (amp * target_mean / old_mean))))
+             for val1, val2, val3, amp in notes]
+
     print("Ostateczna liczba nut:", len(notes))
-    plt.figure(figsize=(12, 6))
-
-    plt.subplot(4, 1, 4)
-    plt.plot(y, label="y")
-    plt.title("4. Wysokość dźwięku")
-    plt.xlabel("Czas [s]");
-    plt.ylabel("y pitch")
-
-    plt.subplot(4, 1, 1)
-    plt.plot(time, midi_pitch, label="Pitch (MIDI)")
-    plt.title("1. Wysokość dźwięku (CREPE)")
-    plt.xlabel("Czas [s]");
-    plt.ylabel("MIDI pitch")
-
-    plt.subplot(4, 1, 2)
-    plt.plot(time, confidence, label="Confidence", color="orange")
-    plt.title("2. Confidence (CREPE)")
-    plt.xlabel("Czas [s]");
-    plt.ylabel("Confidence")
-
-    plt.subplot(4, 1, 3)
-    plt.plot(time, combined, label="Combined", color="green")
-    plt.scatter(time[peaks], combined[peaks], color="red", label="Peaks")
-    plt.title("3. Combined = (1 - confidence) * |gradient|")
-    plt.xlabel("Czas [s]");
-    plt.ylabel("Połączony sygnał")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
+    # plt.figure(figsize=(12, 6))
+    #
+    # plt.subplot(4, 1, 4)
+    # plt.plot(y, label="y")
+    # plt.title("4. Wysokość dźwięku")
+    # plt.xlabel("Czas [s]")
+    # plt.ylabel("y pitch")
+    #
+    # plt.subplot(4, 1, 1)
+    # plt.plot(time, midi_pitch, label="Pitch (MIDI)")
+    # plt.title("1. Wysokość dźwięku (CREPE)")
+    # plt.xlabel("Czas [s]");
+    # plt.ylabel("MIDI pitch")
+    #
+    # plt.subplot(4, 1, 2)
+    # plt.plot(time, confidence, label="Confidence", color="orange")
+    # plt.title("2. Confidence (CREPE)")
+    # plt.xlabel("Czas [s]");
+    # plt.ylabel("Confidence")
+    #
+    # plt.subplot(4, 1, 3)
+    # plt.plot(time, combined, label="Combined", color="green")
+    # plt.scatter(time[peaks], combined[peaks], color="red", label="Peaks")
+    # plt.title("3. Combined = (1 - confidence) * |gradient|")
+    # plt.xlabel("Czas [s]")
+    # plt.ylabel("Połączony sygnał")
+    # plt.legend()
+    # plt.tight_layout()
+    # plt.show()
     return notes
 
 def save_notes_to_midi(notes, output_dir, output_file_name="output.mid", bpm=120):
@@ -200,10 +212,13 @@ def predict_tempo(filepath):
     :param filepath: Path to an audiofile
     :return: Estimated tempo in BPM
     """
-    audio = es.MonoLoader(filename=filepath)()
-    bpm, _, _, _ = es.RhythmExtractor()(audio)
+    try:
+        audio = es.MonoLoader(filename=filepath)()
+        bpm, _, _, _ = es.RhythmExtractor()(audio)
+        print(f"Wykryte tempo: {bpm}bpm")
+    except Exception:
+        bpm = 0
 
-    print(f"Wykryte tempo: {bpm}bpm")
     if bpm <= 0:
         y, sr = librosa.load(librosa.ex('choice'), duration=10)
         [bpm], _ = librosa.beat.beat_track(y=y, sr=sr)
@@ -211,4 +226,13 @@ def predict_tempo(filepath):
         if bpm <= 0:
             bpm = 120
             print(f"Tempo zastąpione domyślną wartością: {bpm}")
+    bpm = int(round(bpm, 0))
     return bpm
+
+def generate_xml(midi_path, output_filename):
+    score = converter.parse(midi_path)
+    for p in score.parts:
+        p.partName = ""
+        p.partAbbreviation = ""
+    score.write("musicxml", output_filename)
+    return output_filename
