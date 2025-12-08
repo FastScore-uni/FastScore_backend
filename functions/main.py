@@ -290,6 +290,10 @@ def convert_bp():
 def convert_crepe():
     return process_audio_request('crepe', preprocessing=False)
 
+@app.route('/convert_crepe_preproc', methods=['POST', 'OPTIONS'])
+def convert_crepe_preproc():
+    return process_audio_request('crepe', preprocessing=True)
+
 @app.route('/convert_melody_ext', methods=['POST', 'OPTIONS'])
 def convert_melody_ext():
     # Fallback to basic pitch for now
