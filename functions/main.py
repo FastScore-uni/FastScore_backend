@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file, Response
 import tempfile
 import os
 import shutil
@@ -11,34 +11,65 @@ from google.auth import iam
 from google.auth import impersonated_credentials
 from google.auth.transport import requests as google_requests
 import google.auth.credentials
+import subprocess
+from pathlib import Path
+import base64
+from midi2audio import FluidSynth
+from svglib.svglib import svg2rlg
+from reportlab.pdfgen import canvas
+from reportlab.graphics import renderPDF
+import verovio
+from io import BytesIO
+import importlib.util
+import mido
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize Firebase Admin
-# On Cloud Run, it uses the default service account credentials automatically
 try:
     initialize_app(options={
         'storageBucket': 'fastscore-b82f4.firebasestorage.app'
     })
 except ValueError:
-    # App already initialized
     pass
 
 app = Flask(__name__)
 
+def convert_opus_to_wav(input_path, timeout=10):
+    input_path = Path(input_path)
+    output_path = input_path.with_suffix(".wav")
 
-@app.route('/', methods=['POST', 'OPTIONS'])
-@app.route('/audio-to-xml', methods=['POST', 'OPTIONS'])
-def audio_to_xml():
-    """
-    HTTP endpoint to convert audio file to MusicXML
-    Accepts: multipart/form-data with 'file' field containing audio
-    Returns: JSON with MusicXML content and download URLs for XML and MIDI
-    """
-    
-    # Set CORS headers for preflight request
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-y",
+        "-v", "error",
+        "-i", str(input_path),
+        "-ac", "1",
+        "-ar", "44100",
+        str(output_path)
+    ]
+
+    try:
+        subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=True
+        )
+    except subprocess.TimeoutExpired:
+        print("FFmpeg timeout — proces zawiesił się.")
+        raise
+    except subprocess.CalledProcessError as e:
+        print("FFmpeg error:", e.stderr.decode())
+        raise
+
+    return str(output_path)
+
+def process_audio_request(model_type='basic_pitch', preprocessing=False):
     if request.method == 'OPTIONS':
         headers = {
             'Access-Control-Allow-Origin': '*',
@@ -48,109 +79,94 @@ def audio_to_xml():
         }
         return ('', 204, headers)
     
-    # Set CORS headers for main request
     headers = {
         'Access-Control-Allow-Origin': '*'
     }
     
-    # Only allow POST requests
     if request.method != 'POST':
         return ('Method not allowed', 405, headers)
     
     try:
-        # Import here to avoid loading heavy dependencies during cold start
         import basic_pitch_convert
+        import crepe_convert
         
-        # Get the uploaded file from the request
         if 'file' not in request.files:
-            logger.warning("No file provided in request")
-            return ('No file provided. Please upload a file with field name "file"', 400, headers)
+            return ('No file provided', 400, headers)
         
         uploaded_file = request.files['file']
-        
         if uploaded_file.filename == '':
-            logger.warning("No filename selected")
             return ('No file selected', 400, headers)
         
-        logger.info(f"Received file: {uploaded_file.filename}")
-        
-        # Get metadata from request
         user_id = request.form.get('user_id')
         title = request.form.get('title', uploaded_file.filename)
         duration = request.form.get('duration', '0:00')
         
-        # Determine format from extension if not provided
         default_format = 'MP3'
         if uploaded_file.filename:
             ext = os.path.splitext(uploaded_file.filename)[1].lower()
             if ext == '.wav':
                 default_format = 'WAV'
-                
         audio_format = request.form.get('format', default_format)
         color = request.form.get('color')
         image_url = request.form.get('imageUrl')
         image_asset = request.form.get('imageAsset')
 
-        # Save uploaded file to temporary location
         temp_dir = tempfile.mkdtemp()
         original_filename = uploaded_file.filename or "audio.mp3"
         audio_file_path = os.path.join(temp_dir, original_filename)
-        
         uploaded_file.save(audio_file_path)
-        logger.info(f"Saved temp file to {audio_file_path}")
         
-        # Convert audio to MusicXML
-        logger.info("Starting conversion...")
-        xml_file_path, midi_file_path = basic_pitch_convert.convert(audio_file_path)
-        logger.info("Conversion completed")
+        # Handle .opus or other formats that need conversion
+        if original_filename.lower().endswith('.opus'):
+             logger.info("Detected .opus file, converting to .wav")
+             audio_file_path = convert_opus_to_wav(audio_file_path)
+
+        logger.info(f"Starting conversion using model: {model_type}")
         
-        # Read the generated MusicXML file
+        if model_type == 'crepe':
+             xml_file_path, midi_file_path = crepe_convert.convert(audio_file_path, preprocessing=preprocessing)
+        else:
+             # Default to basic pitch
+             xml_file_path, midi_file_path = basic_pitch_convert.convert(audio_file_path)
+
         with open(xml_file_path, "r", encoding="utf-8") as f:
             xml_data = f.read()
             
-        # Upload to Firebase Storage
+        with open(midi_file_path, "rb") as f:
+            midi_bytes = f.read()
+        midi_b64 = base64.b64encode(midi_bytes).decode("ascii")
+            
         bucket = storage.bucket()
         unique_id = str(uuid.uuid4())
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         base_name = os.path.splitext(original_filename)[0]
         
-        # Define storage paths
         storage_path_xml = f"conversions/{timestamp}_{unique_id}/{base_name}.musicxml"
         storage_path_midi = f"conversions/{timestamp}_{unique_id}/{base_name}.mid"
         storage_path_audio = f"conversions/{timestamp}_{unique_id}/{original_filename}"
         
-        # Upload XML
         blob_xml = bucket.blob(storage_path_xml)
         blob_xml.upload_from_filename(xml_file_path)
-        logger.info(f"Uploaded XML to {storage_path_xml}")
         
-        # Upload MIDI
         blob_midi = bucket.blob(storage_path_midi)
         blob_midi.upload_from_filename(midi_file_path)
-        logger.info(f"Uploaded MIDI to {storage_path_midi}")
 
-        # Upload Original Audio
         blob_audio = bucket.blob(storage_path_audio)
         blob_audio.upload_from_filename(audio_file_path)
-        logger.info(f"Uploaded Audio to {storage_path_audio}")
         
-        # Get service account email for signing
         credentials, project_id = google.auth.default()
         service_account_email = 'default'
-        
         if hasattr(credentials, 'service_account_email'):
             service_account_email = credentials.service_account_email
             
         if not service_account_email or service_account_email == 'default':
-            # Try to refresh to get the email
             try:
                 auth_request = google_requests.Request()
                 credentials.refresh(auth_request)
                 service_account_email = credentials.service_account_email
-            except Exception as e:
-                logger.warning(f"Could not refresh credentials to get email: {e}")
+            except Exception:
+                pass
 
-        # Fallback: Try to get email from metadata server directly
         if not service_account_email or service_account_email == 'default':
             try:
                 import requests
@@ -159,19 +175,15 @@ def audio_to_xml():
                 response = requests.get(metadata_url, headers=metadata_headers, timeout=2)
                 if response.status_code == 200:
                     service_account_email = response.text.strip()
-            except Exception as e:
-                logger.warning(f"Could not get email from metadata server: {e}")
+            except Exception:
+                pass
         
-        logger.info(f"Using service account email for signing: {service_account_email}")
-
-        # Setup IAM signing if needed (for Cloud Run where credentials don't have private key)
         signing_credentials = credentials
         if not hasattr(credentials, 'sign_bytes'):
             try:
                 if service_account_email == 'default':
                      raise ValueError("Cannot setup IAM signer with 'default' service account email")
                 
-                logger.info(f"Setting up impersonated credentials for signing as {service_account_email}")
                 signing_credentials = impersonated_credentials.Credentials(
                     source_credentials=credentials,
                     target_principal=service_account_email,
@@ -180,47 +192,47 @@ def audio_to_xml():
                 )
             except Exception as e:
                 logger.error(f"Could not setup IAM signer: {e}")
-                raise RuntimeError(f"Failed to setup IAM signer: {e}")
+                pass
 
-        # Generate signed URLs (valid for 7 days)
-        # Note: The service account must have 'Service Account Token Creator' role
-        # Using version='v4' is required when using Cloud Run service account credentials (no private key)
-        xml_url = blob_xml.generate_signed_url(
-            version='v4',
-            expiration=datetime.timedelta(days=7), 
-            method='GET',
-            service_account_email=service_account_email,
-            credentials=signing_credentials
-        )
-        midi_url = blob_midi.generate_signed_url(
-            version='v4',
-            expiration=datetime.timedelta(days=7), 
-            method='GET',
-            service_account_email=service_account_email,
-            credentials=signing_credentials
-        )
-        audio_url = blob_audio.generate_signed_url(
-            version='v4',
-            expiration=datetime.timedelta(days=7), 
-            method='GET',
-            service_account_email=service_account_email,
-            credentials=signing_credentials
-        )
+        try:
+            xml_url = blob_xml.generate_signed_url(
+                version='v4',
+                expiration=datetime.timedelta(days=7), 
+                method='GET',
+                service_account_email=service_account_email,
+                credentials=signing_credentials
+            )
+            midi_url = blob_midi.generate_signed_url(
+                version='v4',
+                expiration=datetime.timedelta(days=7), 
+                method='GET',
+                service_account_email=service_account_email,
+                credentials=signing_credentials
+            )
+            audio_url = blob_audio.generate_signed_url(
+                version='v4',
+                expiration=datetime.timedelta(days=7), 
+                method='GET',
+                service_account_email=service_account_email,
+                credentials=signing_credentials
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate signed URLs: {e}")
+            xml_url = ""
+            midi_url = ""
+            audio_url = ""
         
-        # Clean up temporary files
         shutil.rmtree(temp_dir, ignore_errors=True)
         
-        # Save to Firestore if user_id is provided
         firestore_id = None
         if user_id:
             try:
                 db = firestore.client()
-                # Create a document in the user's 'songs' subcollection
                 doc_ref = db.collection('users').document(user_id).collection('songs').document()
                 
                 song_data = {
                     'userId': user_id,
-                    'date': datetime.datetime.now().strftime("%Y-%m-%d"), # Format as YYYY-MM-DD for display
+                    'date': datetime.datetime.now().strftime("%Y-%m-%d"),
                     'title': title,
                     'duration': duration,
                     'format': audio_format,
@@ -234,22 +246,20 @@ def audio_to_xml():
                     'storagePathXml': storage_path_xml,
                     'storagePathMidi': storage_path_midi,
                     'storagePathAudio': storage_path_audio,
-                    'createdAt': firestore.SERVER_TIMESTAMP
+                    'createdAt': firestore.SERVER_TIMESTAMP,
+                    'model': model_type
                 }
                 
-                # Remove None values
                 song_data = {k: v for k, v in song_data.items() if v is not None}
                 
                 doc_ref.set(song_data)
                 firestore_id = doc_ref.id
-                logger.info(f"Saved song metadata to Firestore for user {user_id}, doc ID: {firestore_id}")
             except Exception as e:
                 logger.error(f"Error saving to Firestore: {e}")
-                # Don't fail the whole request if Firestore save fails, but log it
         
-        # Return JSON response
         response_data = {
-            "xml_content": xml_data,
+            "xml": xml_data,
+            "midi_base64": midi_b64,
             "xml_url": xml_url,
             "midi_url": midi_url,
             "audio_url": audio_url,
@@ -265,6 +275,270 @@ def audio_to_xml():
         traceback.print_exc()
         return (f'Error processing audio file: {str(e)}', 500, headers)
 
+@app.route('/', methods=['POST', 'OPTIONS'])
+@app.route('/audio-to-xml', methods=['POST', 'OPTIONS'])
+def audio_to_xml():
+    # Default endpoint, uses basic_pitch or whatever is in form
+    model = request.form.get('model', 'basic_pitch')
+    return process_audio_request(model)
+
+@app.route('/convert_bp', methods=['POST', 'OPTIONS'])
+def convert_bp():
+    return process_audio_request('basic_pitch')
+
+@app.route('/convert_crepe', methods=['POST', 'OPTIONS'])
+def convert_crepe():
+    return process_audio_request('crepe', preprocessing=False)
+
+@app.route('/convert_melody_ext', methods=['POST', 'OPTIONS'])
+def convert_melody_ext():
+    # Fallback to basic pitch for now
+    return process_audio_request('basic_pitch')
+
+@app.route("/midi-to-audio", methods=['POST', 'OPTIONS'])
+def midi_to_audio():
+    if request.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Max-Age': '3600'
+        }
+        return ('', 204, headers)
+    
+    headers = {
+        'Access-Control-Allow-Origin': '*'
+    }
+    
+    if request.method != 'POST':
+        return ('Method not allowed', 405, headers)
+
+    try:
+        midi_path_arg = request.args.get('midi_path')
+        
+        # If midi_path is provided (from previous conversion), download it from storage
+        if midi_path_arg:
+             # This part is tricky because we don't have easy access to the file system of the previous request
+             # unless we use shared storage or download from the bucket.
+             # For simplicity, let's assume the user uploads the MIDI file again or we download from bucket.
+             # But the frontend code suggests it might be sending a file or a path.
+             # Let's support file upload first as it is more robust.
+             pass
+
+        if 'midi_file' in request.files:
+            midi_file = request.files['midi_file']
+            original_filename = midi_file.filename or "upload.mid"
+        elif 'file' in request.files:
+             midi_file = request.files['file']
+             original_filename = midi_file.filename or "upload.mid"
+        else:
+            return ('No midi file provided', 400, headers)
+
+        temp_dir = tempfile.mkdtemp()
+        midi_path = Path(temp_dir) / original_filename
+        midi_file.save(midi_path)
+        
+        file_size = os.path.getsize(midi_path)
+        logger.info(f"Saved MIDI file to {midi_path}, size: {file_size} bytes")
+        
+        try:
+            mid = mido.MidiFile(midi_path)
+            logger.info(f"MIDI file loaded successfully. Type: {mid.type}, Length: {mid.length} seconds, Tracks: {len(mid.tracks)}")
+            
+            # Log first few messages to verify content
+            sample_messages = []
+            for i, track in enumerate(mid.tracks[:3]):  # First 3 tracks
+                sample_messages.append(f"Track {i}: {len(track)} messages")
+                if len(track) > 0:
+                    sample_messages.append(f"  First: {track[0]}")
+                    if len(track) > 1:
+                        sample_messages.append(f"  Last: {track[-1]}")
+            logger.info("MIDI content sample:\n" + "\n".join(sample_messages))
+        except Exception as e:
+            logger.error(f"Failed to parse MIDI file with mido: {e}")
+
+        wav_path = midi_path.with_suffix(".wav")
+        
+        # Use the soundfont installed in the Docker image
+        soundfont_path = "/usr/share/sounds/sf2/FluidR3_GM.sf2"
+        if not os.path.exists(soundfont_path):
+             logger.warning(f"Soundfont not found at {soundfont_path}, searching /usr/share/sounds/sf2/")
+             found_sf2 = False
+             if os.path.exists("/usr/share/sounds/sf2/"):
+                 for f in os.listdir("/usr/share/sounds/sf2/"):
+                     if f.endswith(".sf2"):
+                         soundfont_path = os.path.join("/usr/share/sounds/sf2/", f)
+                         logger.info(f"Found alternative soundfont: {soundfont_path}")
+                         found_sf2 = True
+                         break
+             
+             if not found_sf2:
+                # Fallback to local directory
+                soundfont_path = "FluidR3_GM.sf2" 
+                logger.warning(f"No soundfont found in system paths, trying local fallback: {soundfont_path}")
+
+        logger.info(f"Using soundfont: {soundfont_path}")
+        
+        # Direct fluidsynth call for better debugging and control
+        # Note: -F automatically outputs WAV format (not raw)
+        cmd = [
+            "fluidsynth",
+            "-ni",           # No shell, no interactive
+            "-g", "1.0",     # Gain
+            "-R", "0",       # Reverb OFF
+            "-C", "0",       # Chorus OFF
+            "-r", "44100",   # Sample rate
+            "-F", str(wav_path), # Output file (WAV format by default)
+            soundfont_path,
+            str(midi_path)
+        ]
+        
+        logger.info(f"Running command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            logger.error(f"Fluidsynth failed with return code {result.returncode}")
+            logger.error(f"Stdout: {result.stdout}")
+            logger.error(f"Stderr: {result.stderr}")
+            return (f"Fluidsynth failed: {result.stderr}", 500, headers)
+            
+        logger.info(f"Fluidsynth stdout: {result.stdout}")
+        # logger.info(f"Fluidsynth stderr: {result.stderr}") # Stderr contains the rendering progress logs
+
+        if not os.path.exists(wav_path) or os.path.getsize(wav_path) < 100:
+             logger.error(f"WAV file generation failed or file too small. Size: {os.path.getsize(wav_path) if os.path.exists(wav_path) else 'Not Found'}")
+             return ("WAV generation failed", 500, headers)
+
+        with open(wav_path, "rb") as f:
+            wav_bytes = f.read()
+        
+        logger.info(f"Generated WAV size: {len(wav_bytes)} bytes")
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+        return Response(wav_bytes, mimetype="audio/wav", headers=headers)
+    except Exception as e:
+        logger.error(f"Error converting MIDI to audio: {e}")
+        import traceback
+        traceback.print_exc()
+        return (f"Error: {e}", 500, headers)
+
+@app.route("/xml-to-pdf", methods=['POST', 'OPTIONS'])
+def xml_to_pdf():
+    if request.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Max-Age': '3600'
+        }
+        return ('', 204, headers)
+    
+    headers = {
+        'Access-Control-Allow-Origin': '*'
+    }
+    
+    if request.method != 'POST':
+        return ('Method not allowed', 405, headers)
+
+    try:
+        xml_content = request.form.get('xml')
+        if not xml_content:
+             # Try getting from file
+             if 'file' in request.files:
+                 xml_content = request.files['file'].read().decode('utf-8')
+             elif 'xml_path' in request.args:
+                 # Not supported directly without bucket access logic
+                 return ('xml_path not supported directly, please upload content', 400, headers)
+        
+        if not xml_content or not xml_content.strip():
+            return ('Empty xml content', 400, headers)
+
+        tk = verovio.toolkit()
+        
+        # Set resource path for fonts
+        try:
+            spec = importlib.util.find_spec("verovio")
+            if spec and spec.origin:
+                verovio_base = os.path.dirname(spec.origin)
+                resource_path = os.path.join(verovio_base, "data")
+                if os.path.exists(resource_path):
+                    logger.info(f"Setting Verovio resource path to: {resource_path}")
+                    tk.setResourcePath(resource_path)
+                else:
+                    logger.error(f"Verovio data directory not found at: {resource_path}")
+                    logger.info(f"Contents of {verovio_base}: {os.listdir(verovio_base)}")
+        except Exception as e:
+            logger.error(f"Error setting Verovio resource path: {e}")
+
+        # Configure Verovio options based on api.py
+        options = {
+            "scale": 80,
+            "footer": "none",
+            "header": "none",
+            "pageHeight": 2970,
+            "pageWidth": 2100,
+            "unit": 10,
+        }
+        tk.setOptions(options)
+
+        if not tk.loadData(xml_content):
+            logger.error("Verovio failed to load XML data")
+            logger.error(f"XML content preview: {xml_content[:200]}")
+            return ('Verovio failed to load XML data', 400, headers)
+
+        page_count = tk.getPageCount()
+        logger.info(f"Verovio generated {page_count} pages")
+
+        if page_count == 0:
+             return ('Verovio generated 0 pages', 400, headers)
+
+        packet = BytesIO()
+
+        pdf_w, pdf_h = 595.0, 842.0
+        c = canvas.Canvas(packet, pagesize=(pdf_w, pdf_h))
+
+        for page in range(1, page_count + 1):
+            svg = tk.renderToSVG(page)
+            if not svg:
+                logger.warning(f"Empty SVG for page {page}")
+                continue
+                
+            svg = svg.replace("#00000", "#000000")
+            
+            try:
+                drawing = svg2rlg(BytesIO(svg.encode("utf-8")))
+                if not drawing:
+                     logger.warning(f"svg2rlg returned None for page {page}")
+                     continue
+
+                # Scaling logic from api.py
+                scale_x = pdf_w / 21000
+                scale_y = pdf_h / 29700
+                scale = min(scale_x, scale_y)
+
+                drawing.scale(scale, scale)
+                
+                # Offset calculation from api.py
+                offset_y = -drawing.height * scale + pdf_h
+
+                renderPDF.draw(drawing, c, 0, offset_y)
+                c.showPage()
+            except Exception as e:
+                logger.error(f"Error rendering page {page}: {e}")
+
+        c.save()
+        packet.seek(0)
+        
+        pdf_content = packet.read()
+        logger.info(f"Generated PDF size: {len(pdf_content)} bytes")
+        
+        return Response(pdf_content, mimetype="application/pdf", headers=headers)
+
+    except Exception as e:
+        logger.error(f"Verovio render error: {e}")
+        import traceback
+        traceback.print_exc()
+        return (f"Verovio render error: {e}", 500, headers)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))

@@ -5,3 +5,14 @@ basic-pitch==0.2.6
 music21>=9.1.0
 scipy<1.13.0
 firebase-admin>=6.2.0
+crepe>=0.0.12
+librosa>=0.10.0
+pyloudnorm>=0.1.1
+mido>=1.3.0
+essentia>=2.1b6.dev1110
+soundfile>=0.12.1
+matplotlib>=3.7.0
+midi2audio>=0.1.1
+svglib>=1.5.1
+reportlab>=4.0.0
+verovio>=3.13.0

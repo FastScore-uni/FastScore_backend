@@ -7,6 +7,13 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3.11-dev \
     ffmpeg \
+    fluidsynth \
+    fluid-soundfont-gm \
+    build-essential \
+    meson \
+    ninja-build \
+    pkg-config \
+    libcairo2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Python 3.11 as default
@@ -18,8 +25,13 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Upgrade pip and install Python dependencies
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir -r requirements.txt
+
+# Download Crepe models during build to avoid runtime download errors
+# Run a dummy prediction to trigger the model download
+RUN python3 -c "import numpy as np; import crepe; crepe.predict(np.zeros(16000), 16000, viterbi=True, model_capacity='full', verbose=0)"
 
 # Copy application code
 COPY . .
