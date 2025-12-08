@@ -1,4 +1,5 @@
 import base64
+import re
 import shutil
 from multiprocessing import Process, Pipe
 import workers
@@ -191,6 +192,7 @@ async def xml_to_pdf(xml: str = Form(...)):
         for page in range(1, page_count + 1):
             svg = tk.renderToSVG(page)
             svg = svg.replace("#00000", "#000000")
+            svg = fix_tempo(svg)
 
             drawing = svg2rlg(BytesIO(svg.encode("utf-8")))
 
@@ -210,3 +212,22 @@ async def xml_to_pdf(xml: str = Form(...)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Verovio render error: {e}")
+
+def fix_tempo(svg: str) -> str:
+    svg = re.sub(
+        r'<tspan[^>]*font-family=["\']Leipzig["\'][^>]*font-size=["\']800px["\'][^>]*>.*?</tspan>',
+        '',
+        svg,
+        flags=re.DOTALL
+    )
+
+    svg = re.sub(
+        r'<tspan[^>]*font-size=["\']450px["\'][^>]*>\s*=\s*</tspan>',
+        '',
+        svg,
+        flags=re.DOTALL
+    )
+
+    svg = re.sub(r'<tspan\b[^>]*>\s*</tspan>', '', svg)
+
+    return svg
