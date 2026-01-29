@@ -25,4 +25,4 @@ def convert(audio_path, preprocessing=False, output_filename="output.musicxml"):
     return xml_path, midi_path
 
 if __name__ == "__main__":
-    convert("test_music/chromatic.wav", preprocessing=True)
+    convert("test_music/Tytuł.wav", preprocessing=False)

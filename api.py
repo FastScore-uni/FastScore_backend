@@ -125,16 +125,16 @@ def audio_to_xml(convert_pipe, file: UploadFile, preprocessing=False):
     os.remove(xml_file_path)
     return {"xml": xml_data, "midi_base64": midi_b64}
 
-@app.post("/convert_bp")
+@app.post("/convert-bp")
 async def convert_bp(file: UploadFile = File(...)):
     return audio_to_xml(bp_pipe, file)
 
-@app.post("/convert_crepe")
+@app.post("/convert-crepe")
 async def convert_crepe(file: UploadFile = File(...)):
     return audio_to_xml(crepe_pipe, file)
 
-@app.post("/convert_crepe_preproc")
-async def convert_bp(file: UploadFile = File(...)):
+@app.post("/convert-crepe_preproc")
+async def convert_with_preprocessing(file: UploadFile = File(...)):
     return audio_to_xml(crepe_pipe, file, preprocessing=True)
 
 # @app.post("/convert_melody_ext")
