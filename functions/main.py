@@ -282,19 +282,19 @@ def audio_to_xml():
     model = request.form.get('model', 'basic_pitch')
     return process_audio_request(model)
 
-@app.route('/convert_bp', methods=['POST', 'OPTIONS'])
+@app.route('/convert-bp', methods=['POST', 'OPTIONS'])
 def convert_bp():
     return process_audio_request('basic_pitch')
 
-@app.route('/convert_crepe', methods=['POST', 'OPTIONS'])
+@app.route('/convert-crepe', methods=['POST', 'OPTIONS'])
 def convert_crepe():
     return process_audio_request('crepe', preprocessing=False)
 
-@app.route('/convert_crepe_preproc', methods=['POST', 'OPTIONS'])
+@app.route('/convert-crepe-preproc', methods=['POST', 'OPTIONS'])
 def convert_crepe_preproc():
     return process_audio_request('crepe', preprocessing=True)
 
-@app.route('/convert_melody_ext', methods=['POST', 'OPTIONS'])
+@app.route('/convert-melody-ext', methods=['POST', 'OPTIONS'])
 def convert_melody_ext():
     # Fallback to basic pitch for now
     return process_audio_request('basic_pitch')
