@@ -123,31 +123,31 @@ def generate_notes(y, sr, time, f0, confidence, time_step):
     notes = [(val1, val2, val3, max(min_velocity, min(max_velocity, (amp * target_mean / old_mean))))
              for val1, val2, val3, amp in notes]
 
-    print("Ostateczna liczba nut:", len(notes))
+    # print("Ostateczna liczba nut:", len(notes))
     # plt.figure(figsize=(12, 6))
     #
-    # plt.subplot(4, 1, 4)
+    # plt.subplot(4, 1, 1)
     # plt.plot(y, label="y")
-    # plt.title("4. Wysokość dźwięku")
+    # plt.title("1. Wysokość dźwięku")
     # plt.xlabel("Czas [s]")
     # plt.ylabel("y pitch")
     #
-    # plt.subplot(4, 1, 1)
+    # plt.subplot(4, 1, 2)
     # plt.plot(time, midi_pitch, label="Pitch (MIDI)")
-    # plt.title("1. Wysokość dźwięku (CREPE)")
-    # plt.xlabel("Czas [s]");
+    # plt.title("2. Wysokość dźwięku (midi)")
+    # plt.xlabel("Czas [s]")
     # plt.ylabel("MIDI pitch")
     #
-    # plt.subplot(4, 1, 2)
+    # plt.subplot(4, 1, 3)
     # plt.plot(time, confidence, label="Confidence", color="orange")
-    # plt.title("2. Confidence (CREPE)")
-    # plt.xlabel("Czas [s]");
+    # plt.title("3. Confidence")
+    # plt.xlabel("Czas [s]")
     # plt.ylabel("Confidence")
     #
-    # plt.subplot(4, 1, 3)
+    # plt.subplot(4, 1, 4)
     # plt.plot(time, combined, label="Combined", color="green")
     # plt.scatter(time[peaks], combined[peaks], color="red", label="Peaks")
-    # plt.title("3. Combined = (1 - confidence) * |gradient|")
+    # plt.title("4. Combined = (1 - confidence) * |gradient|")
     # plt.xlabel("Czas [s]")
     # plt.ylabel("Połączony sygnał")
     # plt.legend()
